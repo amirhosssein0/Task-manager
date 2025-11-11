@@ -11,21 +11,31 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
+from datetime import timedelta
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+if load_dotenv:
+    # Load environment variables from backend/.env
+    load_dotenv(BASE_DIR / '.env')
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = 'django-insecure-7exf4-py_o#^w0omrk)(%ct&f#t+se(b%txl+=^yj7lh0@9ho_'
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-7exf4-py_o#^w0omrk)(%ct&f#t+se(b%txl+=^yj7lh0@9ho_')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.getenv('DJANGO_DEBUG', 'True') == 'True'
 
-ALLOWED_HOSTS = []
+_allowed_hosts = os.getenv('DJANGO_ALLOWED_HOSTS', '')
+ALLOWED_HOSTS = [h for h in _allowed_hosts.split(',') if h] if _allowed_hosts else []
 
 
 # Application definition
@@ -40,7 +50,9 @@ INSTALLED_APPS = [
     'corsheaders',
     'rest_framework',
     'rest_framework_simplejwt',
-    'tasks'
+    'tasks',
+    'accounts',
+    'billing'
 ]
 
 MIDDLEWARE = [
@@ -78,12 +90,24 @@ WSGI_APPLICATION = 'core.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+if os.getenv('DB_ENGINE', '').lower() in {'postgres', 'postgresql', 'django.db.backends.postgresql'}:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': os.getenv('DB_NAME', 'task_manager'),
+            'USER': os.getenv('DB_USER', 'postgres'),
+            'PASSWORD': os.getenv('DB_PASSWORD', ''),
+            'HOST': os.getenv('DB_HOST', 'localhost'),
+            'PORT': os.getenv('DB_PORT', '5432'),
+        }
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 
 # Password validation
@@ -121,7 +145,9 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
-STATIC_ROOT = 'static'
+STATIC_ROOT = BASE_DIR / 'static'
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
@@ -134,6 +160,18 @@ REST_FRAMEWORK = {
     ),
 }
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
+_cors_origins = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000')
+CORS_ALLOWED_ORIGINS = [o for o in _cors_origins.split(',') if o]
+
+_csrf_trusted = os.getenv('CSRF_TRUSTED_ORIGINS', 'http://localhost:3000')
+CSRF_TRUSTED_ORIGINS = [o for o in _csrf_trusted.split(',') if o]
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(hours=int(os.getenv('ACCESS_TOKEN_HOURS', '12'))),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=int(os.getenv('REFRESH_TOKEN_DAYS', '7'))),
+}
+
+# Default permission: open unless specified, endpoints require IsAuthenticated where needed
+REST_FRAMEWORK['DEFAULT_PERMISSION_CLASSES'] = [
+    'rest_framework.permissions.AllowAny'
 ]
