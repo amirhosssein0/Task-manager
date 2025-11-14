@@ -394,7 +394,7 @@ export default function DashboardPage() {
       )}
       <div className="mb-6">
         <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100">Dashboard</h1>
+          <h1 className="text-2xl font-semibold text-emerald-700 dark:text-emerald-400">Dashboard</h1>
           <button
             onClick={generatePDF}
             disabled={generatingPDF}

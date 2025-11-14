@@ -5,8 +5,10 @@ from rest_framework import permissions, status, viewsets
 from rest_framework.decorators import api_view, action, permission_classes
 from rest_framework.response import Response
 from rest_framework.parsers import JSONParser
-from .models import Task
-from .serializers import TaskSerializer
+from .models import Task, TaskTemplate
+from .serializers import (
+	TaskSerializer, TaskTemplateSerializer, TaskTemplateCreateSerializer
+)
 from billing.models import Subscription
 from django.core.exceptions import PermissionDenied
 
@@ -35,7 +37,12 @@ class TaskViewSet(viewsets.ModelViewSet):
 		sub = _get_or_create_trial(self.request.user)
 		if not sub.is_active():
 			raise PermissionDenied("Subscription required. Please subscribe to continue using tasks.")
-		serializer.save(user=self.request.user)
+		task = serializer.save(user=self.request.user)
+		
+		# If this is a recurring task, calculate next recurrence date
+		if task.is_recurring and task.recurrence_type:
+			task.next_recurrence_date = task.calculate_next_recurrence()
+			task.save(update_fields=['next_recurrence_date'])
 
 	@action(detail=False, methods=["get"], url_path="recent")
 	def recent(self, request):
@@ -68,6 +75,44 @@ class TaskViewSet(viewsets.ModelViewSet):
 		task.overdue_notified = False
 		task.save(update_fields=["due_date", "overdue_notified", "updated_at"])
 		return Response(TaskSerializer(task).data)
+	
+	@action(detail=False, methods=["post"], url_path="from-template")
+	def create_from_template(self, request):
+		"""Create tasks from a template"""
+		from billing.views import _get_or_create_trial
+		sub = _get_or_create_trial(request.user)
+		if not sub.is_active():
+			raise PermissionDenied("Subscription required.")
+		
+		template_id = request.data.get("template_id")
+		base_date = request.data.get("base_date", timezone.localdate().isoformat())
+		
+		try:
+			template = TaskTemplate.objects.get(id=template_id, user=request.user)
+		except TaskTemplate.DoesNotExist:
+			return Response(
+				{"error": "Template not found"}, status=status.HTTP_404_NOT_FOUND
+			)
+		
+		base_date_obj = date.fromisoformat(base_date) if isinstance(base_date, str) else base_date
+		created_tasks = []
+		
+		for item in template.items.all():
+			due_date = base_date_obj + timedelta(days=item.due_date_offset)
+			task = Task.objects.create(
+				user=request.user,
+				title=item.title,
+				description=item.description,
+				category=item.category or template.category,
+				label=item.label,
+				due_date=due_date,
+			)
+			created_tasks.append(TaskSerializer(task).data)
+		
+		return Response({
+			"message": f"Created {len(created_tasks)} tasks from template",
+			"tasks": created_tasks
+		}, status=status.HTTP_201_CREATED)
 
 
 @api_view(["GET"])
@@ -141,3 +186,29 @@ def dashboard(request):
 		"subscription_status": subscription_status,
 		"overdue_tasks": overdue_tasks,
 	})
+
+
+class TaskTemplateViewSet(viewsets.ModelViewSet):
+	queryset = TaskTemplate.objects.all()
+	serializer_class = TaskTemplateSerializer
+	parser_classes = [JSONParser]
+	permission_classes = [permissions.IsAuthenticated]
+	
+	def get_queryset(self):
+		from billing.views import _get_or_create_trial
+		sub = _get_or_create_trial(self.request.user)
+		if not sub.is_active():
+			raise PermissionDenied("Subscription required.")
+		return TaskTemplate.objects.filter(user=self.request.user)
+	
+	def get_serializer_class(self):
+		if self.action in ['create', 'update', 'partial_update']:
+			return TaskTemplateCreateSerializer
+		return TaskTemplateSerializer
+	
+	def perform_create(self, serializer):
+		from billing.views import _get_or_create_trial
+		sub = _get_or_create_trial(self.request.user)
+		if not sub.is_active():
+			raise PermissionDenied("Subscription required.")
+		serializer.save(user=self.request.user)

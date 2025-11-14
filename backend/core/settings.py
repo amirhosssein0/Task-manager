@@ -216,6 +216,13 @@ CELERY_BEAT_SCHEDULE = {
             minute=int(os.getenv('OVERDUE_NOTIFY_MINUTE', '0'))
         ),
     },
+    'create-recurring-tasks-daily': {
+        'task': 'tasks.tasks.create_recurring_tasks',
+        'schedule': crontab(
+            hour=int(os.getenv('RECURRING_TASKS_HOUR', '0')),
+            minute=int(os.getenv('RECURRING_TASKS_MINUTE', '0'))
+        ),
+    },
 }
 
 # drf-spectacular settings for Swagger/OpenAPI documentation

@@ -98,6 +98,12 @@ export default function Navigation() {
                 Dashboard
               </Link>
               <Link
+                href="/templates"
+                className="text-gray-600 dark:text-gray-300 hover:text-emerald-700 dark:hover:text-emerald-400 px-3 py-2 rounded-md text-sm font-medium transition-colors"
+              >
+                Templates
+              </Link>
+              <Link
                 href="/profile"
                 className="text-gray-600 dark:text-gray-300 hover:text-emerald-700 dark:hover:text-emerald-400 px-3 py-2 rounded-md text-sm font-medium transition-colors"
               >
@@ -161,6 +167,13 @@ export default function Navigation() {
                 onClick={() => setMobileOpen(false)}
               >
                 Dashboard
+              </Link>
+              <Link
+                href="/templates"
+                className="px-3 py-2 rounded-md text-sm font-medium text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-slate-700"
+                onClick={() => setMobileOpen(false)}
+              >
+                Templates
               </Link>
               <Link
                 href="/profile"

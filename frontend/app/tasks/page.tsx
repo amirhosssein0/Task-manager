@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import SubscriptionModal from '../components/SubscriptionModal';
 import { API_BASE } from '../lib/config';
 import { authenticatedFetch } from '../lib/api';
@@ -15,13 +16,34 @@ interface Task {
   category?: string;
   label?: 'none' | 'yellow' | 'green' | 'blue' | 'red';
   created_at: string;
+  is_recurring?: boolean;
+  recurrence_type?: 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom';
+  recurrence_interval?: number;
+  recurrence_days?: number[];
+  recurrence_end_date?: string;
+  recurrence_count?: number;
+  parent_task?: number;
+  next_recurrence_date?: string;
 }
 
 export default function TasksPage() {
   const router = useRouter();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  
+  // Get date from URL query parameter or use today's date
+  const getInitialDate = () => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const dateParam = params.get('date');
+      if (dateParam) {
+        return dateParam;
+      }
+    }
+    return new Date().toISOString().split('T')[0];
+  };
+  
+  const [selectedDate, setSelectedDate] = useState(getInitialDate());
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [formData, setFormData] = useState({
@@ -30,6 +52,12 @@ export default function TasksPage() {
     due_date: '',
     category: '',
     label: 'none' as 'none' | 'yellow' | 'green' | 'blue' | 'red',
+    is_recurring: false,
+    recurrence_type: 'daily' as 'daily' | 'weekly' | 'monthly' | 'yearly' | 'custom',
+    recurrence_interval: 1,
+    recurrence_days: [] as number[],
+    recurrence_end_date: '',
+    recurrence_count: undefined as number | undefined,
   });
   const [showSubscribe, setShowSubscribe] = useState(false);
   const [subscriptionExpired, setSubscriptionExpired] = useState(false);
@@ -43,14 +71,39 @@ export default function TasksPage() {
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedLabels, setSelectedLabels] = useState<('none' | 'yellow' | 'green' | 'blue' | 'red')[]>([]);
 
+  // Check URL on mount for date parameter
   useEffect(() => {
-    fetchTasks(1); // Reset to page 1 when date changes
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const dateParam = params.get('date');
+      if (dateParam) {
+        setSelectedDate(dateParam);
+      }
+      // If no date in URL, selectedDate will use its default value (today)
+    }
+  }, []);
+
+  useEffect(() => {
+    // Update URL when date changes (but don't reload if it's from URL)
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const currentDate = params.get('date');
+      if (currentDate !== selectedDate) {
+        params.set('date', selectedDate);
+        window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+      }
+    }
+    // Only fetch if selectedDate is set
+    if (selectedDate) {
+      fetchTasks(1); // Reset to page 1 when date changes
+    }
   }, [selectedDate]);
 
-  const fetchTasks = async (page: number = 1) => {
+  const fetchTasks = async (page: number = 1, dateOverride?: string) => {
     try {
+      const dateToUse = dateOverride || selectedDate;
       const response = await authenticatedFetch(
-        `${API_BASE}/api/tasks/?due_date=${selectedDate}&page=${page}`
+        `${API_BASE}/api/tasks/?due_date=${dateToUse}&page=${page}`
       );
 
       if (response.ok) {
@@ -87,17 +140,64 @@ export default function TasksPage() {
   const handleAddTask = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      // Prepare data, cleaning up recurring fields for non-recurring tasks
+      const taskData: any = {
+        title: formData.title,
+        description: formData.description || '',
+        due_date: formData.due_date || selectedDate,
+        category: formData.category || '',
+        label: formData.label,
+        is_recurring: formData.is_recurring,
+      };
+
+      // Only include recurring fields if task is recurring
+      if (formData.is_recurring) {
+        taskData.recurrence_type = formData.recurrence_type;
+        taskData.recurrence_interval = formData.recurrence_interval;
+        taskData.recurrence_days = formData.recurrence_days || [];
+        taskData.recurrence_end_date = formData.recurrence_end_date || null;
+        taskData.recurrence_count = formData.recurrence_count || null;
+      } else {
+        // For non-recurring tasks, explicitly set to null/empty
+        taskData.recurrence_type = null;
+        taskData.recurrence_interval = 1;
+        taskData.recurrence_days = [];
+        taskData.recurrence_end_date = null;
+        taskData.recurrence_count = null;
+      }
+
       const response = await authenticatedFetch(`${API_BASE}/api/tasks/`, {
         method: 'POST',
-        body: JSON.stringify({
-          ...formData,
-          due_date: formData.due_date || selectedDate,
-        }),
+        body: JSON.stringify(taskData),
       });
 
       if (response.ok) {
-        fetchTasks(pagination?.currentPage || 1);
-        setFormData({ title: '', description: '', due_date: '', category: '', label: 'none' });
+        const taskData = await response.json();
+        // If task has a due_date, update selectedDate to show it
+        if (taskData.due_date) {
+          const taskDueDate = taskData.due_date.split('T')[0];
+          if (taskDueDate !== selectedDate) {
+            setSelectedDate(taskDueDate);
+            // fetchTasks will be called by useEffect when selectedDate changes
+          } else {
+            fetchTasks(pagination?.currentPage || 1);
+          }
+        } else {
+          fetchTasks(pagination?.currentPage || 1);
+        }
+        setFormData({
+          title: '',
+          description: '',
+          due_date: '',
+          category: '',
+          label: 'none',
+          is_recurring: false,
+          recurrence_type: 'daily',
+          recurrence_interval: 1,
+          recurrence_days: [],
+          recurrence_end_date: '',
+          recurrence_count: undefined,
+        });
         setShowAddForm(false);
       } else if (response.status === 403) {
         setSubscriptionExpired(true);
@@ -114,15 +214,65 @@ export default function TasksPage() {
     if (!editingTask) return;
 
     try {
+      // Prepare data, cleaning up recurring fields for non-recurring tasks
+      const taskData: any = {
+        title: formData.title,
+        description: formData.description || '',
+        due_date: formData.due_date,
+        category: formData.category || '',
+        label: formData.label,
+        is_recurring: formData.is_recurring,
+      };
+
+      // Only include recurring fields if task is recurring
+      if (formData.is_recurring) {
+        taskData.recurrence_type = formData.recurrence_type;
+        taskData.recurrence_interval = formData.recurrence_interval;
+        taskData.recurrence_days = formData.recurrence_days || [];
+        taskData.recurrence_end_date = formData.recurrence_end_date || null;
+        taskData.recurrence_count = formData.recurrence_count || null;
+      } else {
+        // For non-recurring tasks, explicitly set to null/empty
+        taskData.recurrence_type = null;
+        taskData.recurrence_interval = 1;
+        taskData.recurrence_days = [];
+        taskData.recurrence_end_date = null;
+        taskData.recurrence_count = null;
+      }
+
       const response = await authenticatedFetch(`${API_BASE}/api/tasks/${editingTask.id}/`, {
         method: 'PATCH',
-        body: JSON.stringify(formData),
+        body: JSON.stringify(taskData),
       });
 
       if (response.ok) {
-        fetchTasks(pagination?.currentPage || 1);
+        const taskData = await response.json();
+        // If task due_date changed, update selectedDate to show it
+        if (taskData.due_date) {
+          const taskDueDate = taskData.due_date.split('T')[0];
+          if (taskDueDate !== selectedDate) {
+            setSelectedDate(taskDueDate);
+            // fetchTasks will be called by useEffect when selectedDate changes
+          } else {
+            fetchTasks(pagination?.currentPage || 1);
+          }
+        } else {
+          fetchTasks(pagination?.currentPage || 1);
+        }
         setEditingTask(null);
-        setFormData({ title: '', description: '', due_date: '', category: '', label: 'none' });
+        setFormData({
+          title: '',
+          description: '',
+          due_date: '',
+          category: '',
+          label: 'none',
+          is_recurring: false,
+          recurrence_type: 'daily',
+          recurrence_interval: 1,
+          recurrence_days: [],
+          recurrence_end_date: '',
+          recurrence_count: undefined,
+        });
       } else if (response.status === 403) {
         setSubscriptionExpired(true);
         setShowSubscribe(true);
@@ -142,7 +292,7 @@ export default function TasksPage() {
       });
 
       if (response.ok) {
-        fetchTasks();
+        fetchTasks(1);
       } else if (response.status === 403) {
         setSubscriptionExpired(true);
         setShowSubscribe(true);
@@ -179,13 +329,31 @@ export default function TasksPage() {
       due_date: task.due_date.split('T')[0],
       category: task.category || '',
       label: (task.label ?? 'none') as 'none' | 'yellow' | 'green' | 'blue' | 'red',
+      is_recurring: task.is_recurring || false,
+      recurrence_type: task.recurrence_type || 'daily',
+      recurrence_interval: task.recurrence_interval || 1,
+      recurrence_days: task.recurrence_days || [],
+      recurrence_end_date: task.recurrence_end_date ? task.recurrence_end_date.split('T')[0] : '',
+      recurrence_count: task.recurrence_count,
     });
     setShowAddForm(true);
   };
 
   const cancelEdit = () => {
     setEditingTask(null);
-    setFormData({ title: '', description: '', due_date: '', category: '', label: 'none' });
+    setFormData({
+      title: '',
+      description: '',
+      due_date: '',
+      category: '',
+      label: 'none',
+      is_recurring: false,
+      recurrence_type: 'daily',
+      recurrence_interval: 1,
+      recurrence_days: [],
+      recurrence_end_date: '',
+      recurrence_count: undefined,
+    });
     setShowAddForm(false);
   };
 
@@ -312,7 +480,7 @@ export default function TasksPage() {
     return (
       <div className="max-w-6xl mx-auto py-8 px-4">
         <div className="mb-6">
-          <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 mb-4">My Tasks</h1>
+          <h1 className="text-2xl font-semibold text-emerald-700 dark:text-emerald-400 mb-4">My Tasks</h1>
         </div>
         <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-6 text-center">
           <div className="mb-4">
@@ -339,7 +507,7 @@ export default function TasksPage() {
           onSuccess={() => {
             setShowSubscribe(false);
             setSubscriptionExpired(false);
-            fetchTasks();
+            fetchTasks(1);
           }}
         />
       </div>
@@ -349,7 +517,7 @@ export default function TasksPage() {
   return (
     <div className="max-w-6xl mx-auto py-8 px-4">
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900 dark:text-gray-100 mb-4">My Tasks</h1>
+        <h1 className="text-2xl font-semibold text-emerald-700 dark:text-emerald-400 mb-4">My Tasks</h1>
         
         {/* Date Selector */}
         <div className="mb-4">
@@ -474,6 +642,107 @@ export default function TasksPage() {
                   ))}
                 </div>
               </div>
+              
+              {/* Recurring Task Options */}
+              <div className="border-t border-gray-200 dark:border-slate-700 pt-4">
+                <div className="flex items-center gap-2 mb-4">
+                  <input
+                    type="checkbox"
+                    id="is_recurring"
+                    checked={formData.is_recurring}
+                    onChange={(e) => setFormData({ ...formData, is_recurring: e.target.checked })}
+                    className="w-4 h-4 text-emerald-600 rounded focus:ring-emerald-500"
+                  />
+                  <label htmlFor="is_recurring" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Make this a recurring task
+                  </label>
+                </div>
+                
+                {formData.is_recurring && (
+                  <div className="space-y-4 pl-6 border-l-2 border-emerald-200 dark:border-emerald-800">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                          Repeat Every
+                        </label>
+                        <div className="flex gap-2">
+                          <input
+                            type="number"
+                            min="1"
+                            value={formData.recurrence_interval}
+                            onChange={(e) => setFormData({ ...formData, recurrence_interval: parseInt(e.target.value) || 1 })}
+                            className="w-20 px-3 py-2 border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-emerald-500"
+                          />
+                          <select
+                            value={formData.recurrence_type}
+                            onChange={(e) => setFormData({ ...formData, recurrence_type: e.target.value as any })}
+                            className="flex-1 px-3 py-2 border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-emerald-500"
+                          >
+                            <option value="daily">Day(s)</option>
+                            <option value="weekly">Week(s)</option>
+                            <option value="monthly">Month(s)</option>
+                            <option value="yearly">Year(s)</option>
+                          </select>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                          End Date (Optional)
+                        </label>
+                        <input
+                          type="date"
+                          value={formData.recurrence_end_date}
+                          onChange={(e) => setFormData({ ...formData, recurrence_end_date: e.target.value })}
+                          className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-emerald-500"
+                        />
+                      </div>
+                    </div>
+                    {formData.recurrence_type === 'weekly' && (
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                          Days of Week
+                        </label>
+                        <div className="flex flex-wrap gap-2">
+                          {['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].map((day, index) => (
+                            <button
+                              key={index}
+                              type="button"
+                              onClick={() => {
+                                const days = formData.recurrence_days || [];
+                                const newDays = days.includes(index)
+                                  ? days.filter(d => d !== index)
+                                  : [...days, index];
+                                setFormData({ ...formData, recurrence_days: newDays });
+                              }}
+                              className={`px-3 py-1 rounded-lg text-sm font-medium transition-colors ${
+                                formData.recurrence_days?.includes(index)
+                                  ? 'bg-emerald-600 text-white'
+                                  : 'bg-gray-200 dark:bg-slate-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-slate-600'
+                              }`}
+                            >
+                              {day.slice(0, 3)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                        Number of Occurrences (Optional)
+                      </label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={formData.recurrence_count || ''}
+                        onChange={(e) => setFormData({ ...formData, recurrence_count: e.target.value ? parseInt(e.target.value) : undefined })}
+                        placeholder="Leave empty for unlimited"
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-gray-900 dark:text-gray-100 rounded-lg focus:ring-2 focus:ring-emerald-500"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+              
               <div className="flex gap-2">
                 <button
                   type="submit"
@@ -496,12 +765,20 @@ export default function TasksPage() {
 
       {/* Add Task Button */}
       {!showAddForm && (
-        <button
-          onClick={() => setShowAddForm(true)}
-          className="mb-6 px-6 py-3 bg-emerald-700 dark:bg-emerald-600 text-white rounded-lg hover:bg-emerald-800 dark:hover:bg-emerald-700 font-medium transition-colors"
-        >
-          + Add New Task
-        </button>
+        <div className="mb-6 flex gap-3">
+          <button
+            onClick={() => setShowAddForm(true)}
+            className="px-6 py-3 bg-emerald-700 dark:bg-emerald-600 text-white rounded-lg hover:bg-emerald-800 dark:hover:bg-emerald-700 font-medium transition-colors"
+          >
+            + Add New Task
+          </button>
+          <Link
+            href="/templates"
+            className="px-6 py-3 bg-blue-600 dark:bg-blue-700 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-800 font-medium transition-colors"
+          >
+            📋 Use Template
+          </Link>
+        </div>
       )}
 
       {/* Search and Filters Section */}
