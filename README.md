@@ -559,6 +559,3 @@ When adding new Celery tasks:
 
 ---
 
-## 📄 License
-
-[Your License Here]
